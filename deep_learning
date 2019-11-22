@@ -1,0 +1,122 @@
+library(tidyverse)
+library(recipes)
+library(caret)
+library(h2o)
+library(plot3D)
+library(data.table) ##fread function
+
+###Human Recognition Pattern
+
+use.trainX <- read.table('X_train.txt')
+use.trainY <- read.table('y_train.txt')[[1]]
+
+use.labels <- read.table('activity_labels.txt')
+use.preditors <- read.table('features.txt')
+
+y <- c('WALKING',
+       'WALKING_UPSTAIRS',
+       'WALKING_DOWNSTAIRS',
+       'SITTING',
+       'STANDING',
+       'LAYING' )
+
+use.trainY <- use.trainY %>%
+  factor(levels = 1:6, labels = y)
+
+use.train <- use.trainX %>%
+  mutate(activity = use.trainY)
+
+
+##Plot first 3 variables
+primeiro <- use.train %>%
+  select(V1, V2, V3, activity) %>%
+  rename(tBodyAcc.mean.X = V1, tBodyAcc.mean.Y = V2, tBodyAcc.mean.Z = V3)
+
+scatter3D(primeiro$tBodyAcc.mean.X, primeiro$tBodyAcc.mean.Y, primeiro$tBodyAcc.mean.Z,
+          col.var = as.integer(primeiro$activity))
+
+
+##Deep Learning with H2odtime
+h2o.init()
+
+h2o.trainX <- as.h2o(use.train)
+h2o.dim(h2o.trainX)
+
+# Split Data Frame
+h2o.split <- h2o.splitFrame(data = h2o.trainX, ratios = 0.75)
+h2o_train <-  h2o.split[[1]]
+h2o_test <- h2o.split[[2]]
+
+h2o.deep <- h2o.deeplearning(x = 1:561, y = 562, training_frame = h2o_train,
+                             validation_frame = h2o_test,
+                             activation = 'RectifierWithDropout',
+                             hidden = 100,
+                             epochs = 10,
+                             input_dropout_ratio = 0,
+                             hidden_dropout_ratios = c(.2))
+
+h2o.performance(h2o.deep, h2o_test)
+h2o.varimp_plot(h2o.deep)
+h2o.flow()
+
+h2o.describe(h2o_train)
+
+
+## Million Song Dataset #################33
+
+d <- fread('YearPredictionMSD.txt', sep = ',')
+dim(d)
+head(d)
+
+h2o_data <- as.h2o(d)
+
+h2o.split <- h2o.splitFrame(data = h2o_data, ratios = 0.75)
+h2o_train <-  h2o.split[[1]]
+h2o_test <- h2o.split[[2]]
+
+
+h2o.deep <- h2o.deeplearning(x = 2:91, y = 1, training_frame = h2o_train,
+                             validation_frame = h2o_test,
+                             activation = 'RectifierWithDropout',
+                             hidden = c(50),
+                             epochs = 100,
+                             input_dropout_ratio = 0,
+                             hidden_dropout_ratios = c(0),
+                             score_training_samples = 0,
+                             score_validation_samples = 0,
+                             diagnostics = TRUE,
+                             export_weights_and_biases = TRUE,
+                             variable_importances = TRUE)
+
+h2o.performance(h2o.deep, h2o_test)
+
+
+#### Take a sample to explain with pca
+msong <- sample_n(d, 10000) %>%
+  arrange(V1)
+
+dim(msong)
+head(msong)
+
+rec <- recipe(V1 ~ . , data = msong) %>%
+  step_YeoJohnson(all_predictors()) %>%
+  step_center(all_predictors()) %>% 
+  step_scale(all_predictors()) %>%
+  step_pca(all_predictors())
+
+preparo <- prep(rec, msong)
+
+Msong <- bake(preparo, msong)
+
+### Take a linear model as example
+model_01 <- lm(V1 ~ . , data = Msong)
+summary(model_01)
+
+ggplot(Msong, aes(V1, PC1))+
+  geom_point()
+
+ggplot(Msong, aes(V1, PC2))+
+  geom_point()
+
+ggplot(Msong, aes(PC1, PC2, fill = V1))+
+  geom_hex()
